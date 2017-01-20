@@ -71,8 +71,15 @@ class Jasper(object):
                                e.problem.strip(), str(e.problem_mark).strip())
             raise
 
+        ###########           CONFIG READ
+        # Here start reading CONFIG, should get saperated
+        #           Take look at JayPeg Path.py function
         try:
             language = self.config['language']
+            if isinstance(language, dict):
+                self._logger.info("Multi languages selected")
+            else:
+                self._logger.info("Single language selected")
         except KeyError:
             self._logger.warning(
                 "language not specified in profile, using 'en-US'")
@@ -87,8 +94,14 @@ class Jasper(object):
                               "defaults.")
         self._logger.debug("Using Audio engine '%s'", audio_engine_slug)
 
+        #########             STT
+        # Add multi-STT support, if configed!
         try:
             active_stt_slug = self.config['stt_engine']
+            if isinstance(active_stt_slug, dict):
+                self._logger.debug("Multi STT engine set, this can get tricky!")
+            else:
+                self._logger.debug("Single STT selected")
         except KeyError:
             active_stt_slug = 'sphinx'
             self._logger.warning("stt_engine not specified in profile, " +
@@ -98,7 +111,11 @@ class Jasper(object):
         try:
             passive_stt_slug = self.config['stt_passive_engine']
         except KeyError:
-            passive_stt_slug = active_stt_slug
+            if isinstance(active_stt_slug, str):
+                passive_stt_slug = active_stt_slug
+            else:
+                self._logger.warning("There are multiple STT engines but no default selected! Using default.")
+                passive_stt_slug = 'sphinx'
         self._logger.debug("Using passive STT engine '%s'", passive_stt_slug)
 
         try:
@@ -109,11 +126,21 @@ class Jasper(object):
                                  "defaults.")
         self._logger.debug("Using TTS engine '%s'", tts_slug)
 
+        # Could be the option to have multiple keywords?
         try:
             keyword = self.config['keyword']
         except KeyError:
             keyword = 'Jasper'
         self._logger.info("Using keyword '%s'", keyword)
+
+        # NEW # =adding stop word
+        # This for the option to stop running jobs
+        try:
+            stopword = self.config['stopword']
+        except KeyError:
+            stopword = 'Stop'
+        self._logger.info("Using stopword '%s'", stopword)
+        # END # stopword
 
         # Load plugins
         plugin_directories = [
@@ -128,49 +155,99 @@ class Jasper(object):
                                           category='audioengine')
         self.audio = ae_info.plugin_class(ae_info, self.config)
 
+        # NEW # Adding multiple input device support
         # Initialize audio input device
         devices = [device.slug for device in self.audio.get_devices(
             device_type=audioengine.DEVICE_TYPE_INPUT)]
         try:
             device_slug = self.config['input_device']
+            if isinstance(device_slug,dict):
+                self._logger.debug("A set range of input devices selected.")
+            else:
+                self._logger.debug("One input device selected")
         except KeyError:
             device_slug = self.audio.get_default_device(output=False).slug
-            self._logger.warning("input_device not specified in profile, " +
+            if isinstance(device_slug,str):
+                self._logger.warning("Option for 1 input_device not specified in profile, " +
                                  "defaulting to '%s' (Possible values: %s)",
                                  device_slug, ', '.join(devices))
-        try:
-            input_device = self.audio.get_device_by_slug(device_slug)
-            if audioengine.DEVICE_TYPE_INPUT not in input_device.types:
-                raise audioengine.UnsupportedFormat(
-                    "Audio device with slug '%s' is not an input device"
-                    % input_device.slug)
-        except (audioengine.DeviceException) as e:
-            self._logger.critical(e.args[0])
-            self._logger.warning('Valid output devices: %s',
+            else:
+                self._logger.debug("No default input selected. But multiple inputs. Now we use all!")
+        # Check every device...if multiple
+        if isinstance(device_slug,str):
+            try:
+                input_device = self.audio.get_device_by_slug(device_slug)
+                if audioengine.DEVICE_TYPE_INPUT not in input_device.types:
+                    raise audioengine.UnsupportedFormat(
+                        "Audio device with slug '%s' is not an input device"
+                        % input_device.slug)
+            except (audioengine.DeviceException) as e:
+                self._logger.critical(e.args[0])
+                self._logger.warning('Valid output devices: %s',
                                  ', '.join(devices))
-            raise
+                raise #Not yet sure if to be removed...(for proper error reporting?)
+        else:
+            input_device = []
+            for index,each_device in enumerate(device_slug):
+                try:
+                    input_device.append(self.audio.get_device_by_slug(each_device))
+                    if audioengine.DEVICE_TYPE_INPUT not in input_device[index].types:
+                        raise audioengine.UnsupportedFormat(
+                            "Audio device with slug '%s' is not an input device"
+                            % input_device[index].slug)
+                except (audioengine.DeviceException) as e:
+                    self._logger.critical(e.args[0])
+                    self._logger.warning('Valid output devices: %s',
+                                     ', '.join(devices))
+                    raise #Not yet sure if to be removed...(for proper error reporting?)
+        # END #
 
+        # NEW # Adding multiple output device support
         # Initialize audio output device
         devices = [device.slug for device in self.audio.get_devices(
             device_type=audioengine.DEVICE_TYPE_OUTPUT)]
         try:
             device_slug = self.config['output_device']
+            if isinstance(device_slug, dict):
+                self._logger.debug("A set range of input devices selected.")
+            else:
+                self._logger.debug("One input device selected")
         except KeyError:
             device_slug = self.audio.get_default_device(output=True).slug
-            self._logger.warning("output_device not specified in profile, " +
+            if isinstance(device_slug, str):
+                self._logger.warning("Option for 1 input_device not specified in profile, " +
                                  "defaulting to '%s' (Possible values: %s)",
                                  device_slug, ', '.join(devices))
-        try:
-            output_device = self.audio.get_device_by_slug(device_slug)
-            if audioengine.DEVICE_TYPE_OUTPUT not in output_device.types:
-                raise audioengine.UnsupportedFormat(
-                    "Audio device with slug '%s' is not an output device"
-                    % output_device.slug)
-        except (audioengine.DeviceException) as e:
-            self._logger.critical(e.args[0])
-            self._logger.warning('Valid output devices: %s',
+            else:
+                self._logger.debug("No default input selected. But multiple inputs. Now we use all!")
+        # Check every device...
+        if isinstance(device_slug,str):
+            try:
+                output_device = self.audio.get_device_by_slug(device_slug)
+                if audioengine.DEVICE_TYPE_OUTPUT not in output_device.types:
+                    raise audioengine.UnsupportedFormat(
+                        "Audio device with slug '%s' is not an output device"
+                        % output_device.slug)
+            except (audioengine.DeviceException) as e:
+                self._logger.critical(e.args[0])
+                self._logger.warning('Valid output devices: %s',
                                  ', '.join(devices))
-            raise
+                raise
+        else:
+            output_device = []
+            for index,each_device in enumerate(device_slug):
+                try:
+                    output_device.append(self.audio.get_device_by_slug(each_device))
+                    if audioengine.DEVICE_TYPE_OUTPUT not in output_device[index].types:
+                        raise audioengine.UnsupportedFormat(
+                            "Audio device with slug '%s' is not an output device"
+                            % output_device[index].slug)
+                except (audioengine.DeviceException) as e:
+                    self._logger.critical(e.args[0])
+                    self._logger.warning('Valid output devices: %s',
+                                 ', '.join(devices))
+                    raise
+        # END #
 
         # Initialize Brain
         self.brain = brain.Brain(self.config)
@@ -224,6 +301,9 @@ class Jasper(object):
                                      keyword=keyword)
             self._logger.info('Using batched mode')
         else:
+            # NEW #
+            # Normal operation for MIC:
+            #    Here is where the magic starts for multiple INPUT devices
             self.mic = mic.Mic(
                 input_device, output_device,
                 passive_stt_plugin, active_stt_plugin,
