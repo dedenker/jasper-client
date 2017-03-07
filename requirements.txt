@@ -8,6 +8,8 @@ PyYAML==3.11
 requests==2.5.0
 mad==0.2.2
 Flask==0.12
+pyaudio==0.2.10
+# sudo apt-get install portaudio19-dev
 
 # Pocketsphinx STT engine
 cmuclmtk==0.1.5
